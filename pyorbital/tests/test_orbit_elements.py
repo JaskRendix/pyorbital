@@ -139,25 +139,6 @@ def test_apogee_computation():
     assert orbit.apogee == pytest.approx(expected_apogee, abs=1e-3)
 
 
-def test_to_tle_dict_structure():
-    """Test dictionary export of TLE-like orbital elements."""
-    tle = MockTLE()
-    orbit = OrbitElements(tle)
-    tle_dict = orbit.to_tle_dict()
-    assert isinstance(tle_dict, dict)
-    expected_keys = {
-        "epoch",
-        "inclination_deg",
-        "right_ascension_deg",
-        "excentricity",
-        "arg_perigee_deg",
-        "mean_anomaly_deg",
-        "mean_motion_rev_per_day",
-        "bstar",
-    }
-    assert expected_keys.issubset(tle_dict.keys())
-
-
 def test_semi_major_axis_accuracy():
     """Test semi-major axis against analytical reference value (in km)."""
     tle = MockTLE()

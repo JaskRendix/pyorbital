@@ -573,6 +573,7 @@ class OrbitElements:
 
     def __init__(self, tle):
         """Initialize the class."""
+        self.tle = tle
         self.epoch = tle.epoch
         self.excentricity = tle.excentricity
         self.inclination = np.deg2rad(tle.inclination)
@@ -646,13 +647,30 @@ class OrbitElements:
 
         return np.array([x, y])
 
+    def _get_velocity_at_apsis(self, e_1, e_2):
+        """Helper method to compute orbital velocity at an apsis."""
+        mu = XKE**2 * AE**3
+
+        # r_apsis is the distance at the apsis (perigee or apogee)
+        r_apsis = self.semi_major_axis * e_1
+
+        # The velocity formula: V = sqrt( mu * (2/r - 1/a) ).
+        # For apse lines (r = a * (1-e^2)/(1+e*cos(nu)), it simplifies to:
+        # V = sqrt( mu * (1 ± e) / r )
+        v_er_per_min = np.sqrt(mu * (e_2 / r_apsis))
+
+        # Conversion factor: (AE * XKMPER) converts ER -> km; / 60 converts min -> s
+        conversion_factor = (AE * XKMPER) / 60.0
+
+        return v_er_per_min * conversion_factor
+
     def velocity_at_perigee(self):
         """Compute orbital velocity at perigee in km/s."""
-        return _get_velocity_at_apsis(1 - self.excentricity, 1 + self.excentricity)
+        return self._get_velocity_at_apsis(1 - self.excentricity, 1 + self.excentricity)
 
     def velocity_at_apogee(self):
         """Compute orbital velocity at apogee in km/s."""
-        return _get_velocity_at_apsis(1 + self.excentricity, 1 - self.excentricity)
+        return self._get_velocity_at_apsis(1 + self.excentricity, 1 - self.excentricity)
 
     def _calculate_mean_motion_and_semi_major_axis(self):
         a_1 = (XKE / self.mean_motion) ** (2.0 / 3)
@@ -666,19 +684,6 @@ class OrbitElements:
         corrected_semi_major_axis = a_0 / (1 - delta_0)
 
         return corrected_mean_motion, corrected_semi_major_axis
-
-    def to_tle_dict(self):
-        """Return a dictionary with TLE-like orbital elements."""
-        return {
-            "epoch": self.epoch,
-            "inclination_deg": np.rad2deg(self.inclination),
-            "right_ascension_deg": np.rad2deg(self.right_ascension),
-            "excentricity": self.excentricity,
-            "arg_perigee_deg": np.rad2deg(self.arg_perigee),
-            "mean_anomaly_deg": np.rad2deg(self.mean_anomaly),
-            "mean_motion_rev_per_day": self.mean_motion * XMNPDA / (2 * np.pi),
-            "bstar": self.bstar / AE
-        }
 
 
 class _SGDP4Base:
