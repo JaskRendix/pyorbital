@@ -28,6 +28,7 @@ import datetime as dt
 import logging
 import warnings
 from functools import partial
+from pyorbital.deep_space import DeepSpace
 
 import numpy as np
 from scipy import optimize
@@ -763,16 +764,17 @@ class _SGDP4Base:
         self.sinXMO = np.sin(self.xmo)
         self.delmo = (1.0 + self.eta * self.cosXMO)**3
 
-        self.d2 = None
-        self.d3 = None
-        self.d4 = None
-        self.t3cof = None
-        self.t4cof = None
-        self.t5cof = None
+        self.d2 = 0.0
+        self.d3 = 0.0
+        self.d4 = 0.0
+        self.t3cof = 0.0
+        self.t4cof = 0.0
+        self.t5cof = 0.0
+
         if self.mode == SGDP4_NEAR_NORM:
             self._calculate_near_norm_parameters(tsi, s4)
-        elif self.mode == SGDP4_DEEP_NORM:
-            raise NotImplementedError("Deep space calculations not supported")
+        if self.mode == SGDP4_DEEP_NORM:
+            self.deep_space_model = DeepSpace(self)
 
     def _calculate_basic_orbit_params(self):
         a1 = (XKE / self.xn_0) ** (2. / 3)
@@ -1067,8 +1069,12 @@ class _SGDP4:
     def propagate(self, utc_time):
         if self.mode == SGDP4_ZERO_ECC:
             raise NotImplementedError("Mode SGDP4_ZERO_ECC not implemented")
-        elif self.mode != SGDP4_NEAR_NORM:
-            raise NotImplementedError("Deep space calculations not supported")
+
+        tsince = (dt2np(utc_time) - self._params.t_0) / np.timedelta64(1, "m")
+
+        if self.mode == SGDP4_DEEP_NORM:
+            self._params.deep_space_model.update_secular(tsince)
+            self._params.deep_space_model.update_periodic(tsince)
 
         kep = _Keplerians(self._params)
         return kep.calculate(utc_time)
@@ -1273,6 +1279,35 @@ class _Keplerians:
         self.rfdotk = ((XKE * np.sqrt(self._pl) * self._invR + temp2 * self._temp1 *
                    (self._params.x1mth2 * self._cos2u + 1.5 * self._params.x3thm1)) *
                   (XKMPER / AE * XMNPDA / 86400.0))
+    def _calculate_velocity_vector(self):
+        """
+        Computes the satellite's velocity vector in the Earth-Centered Inertial (ECI) frame.
+
+        This method transforms the radial and transverse velocity components (rdotk and rfdotk),
+        which are calculated in the orbital plane, into Cartesian coordinates in the ECI frame.
+        The transformation accounts for the satellite's current argument of latitude (uk),
+        right ascension of the ascending node (xnodek), and inclination (xinc).
+
+        Return: np.ndarray: A 3-element array representing the velocity vector [vx, vy, vz]
+        in km/s."""
+        rdot = self.rdotk  # radial velocity (km/s)
+        rfdot = self.rfdotk  # transverse velocity (km/s)
+
+        sin_u = np.sin(self.uk)
+        cos_u = np.cos(self.uk)
+        sin_raan = np.sin(self.xnodek)
+        cos_raan = np.cos(self.xnodek)
+        sin_inc = np.sin(self.xinc)
+        cos_inc = np.cos(self.xinc)
+
+        # Perifocal frame to ECI transformation
+        vx = rdot * (cos_u * cos_raan - sin_u * sin_raan * cos_inc) - \
+            rfdot * (sin_u * cos_raan + cos_u * sin_raan * cos_inc)
+        vy = rdot * (cos_u * sin_raan + sin_u * cos_raan * cos_inc) - \
+            rfdot * (sin_u * sin_raan - cos_u * cos_raan * cos_inc)
+        vz = rdot * (sin_u * sin_inc) + rfdot * (cos_u * sin_inc)
+
+        return np.array([vx, vy, vz])
 
     def _collect_return_values(self):
         kep = {}
@@ -1285,6 +1320,7 @@ class _Keplerians:
         kep["smjaxs"] = self._a * XKMPER / AE
         kep["rdotk"] = self.rdotk
         kep["rfdotk"] = self.rfdotk
+        kep["velocity"] = self._calculate_velocity_vector()
 
         return kep
 
