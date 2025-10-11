@@ -41,19 +41,35 @@ import numpy as np
 
 from pyorbital import dt2np
 
-F = 1 / 298.257223563  # Earth flattening WGS-84
-A = 6378.137  # WGS84 Equatorial radius
-MFACTOR = 7.292115E-5
+# Earth and orbital parameters
+EARTH_FLATTENING = 1 / 298.257223563  # WGS-84 flattening
+EARTH_RADIUS_EQUATORIAL = 6378.137  # WGS-84 equatorial radius in km
+EARTH_ROTATION_RATE = 7.292115e-5  # radians/sec
+
+# Julian date reference
+J2000_DATETIME = np.datetime64("2000-01-01T12:00")
+J2000_JULIAN_DAY = 2451545.0
+
+# Obliquity of the ecliptic base value
+OBLIQUITY_BASE_DEG = 23.0 + 26.0 / 60.0 + 21.448 / 3600.0
+
+# Sun-Earth distance correction parameters
+SUN_EARTH_ECCENTRICITY = 0.0167
+SUN_EARTH_YEAR_LENGTH = 365.25636
+SUN_EARTH_PERIHELION_DAY = 3
+
+# Astronomical unit (AU) in meters
+ASTRONOMICAL_UNIT = 149597870700.0
 
 
-def jdays2000(utc_time):
+def jdays2000(utc_time: np.datetime64) -> float:
     """Get the days since year 2000."""
-    return _days(dt2np(utc_time) - np.datetime64("2000-01-01T12:00"))
+    return _days(dt2np(utc_time) - J2000_DATETIME)
 
 
-def jdays(utc_time):
+def jdays(utc_time: np.datetime64) -> float:
     """Get the julian day of *utc_time*."""
-    return jdays2000(utc_time) + 2451545.0
+    return jdays2000(utc_time) + J2000_JULIAN_DAY
 
 
 def _days(dt):
@@ -70,8 +86,7 @@ def gmst(utc_time):
     http://www.celestrak.com/publications/AIAA/2006-6753/
     """
     ut1 = jdays2000(utc_time) / 36525.0
-    theta = 67310.54841 + ut1 * (876600 * 3600 + 8640184.812866 + ut1 *
-                                 (0.093104 - ut1 * 6.2 * 10e-6))
+    theta = 67310.54841 + ut1 * (876600 * 3600 + 8640184.812866 + ut1 * (0.093104 - ut1 * 6.2 * 10e-6))
     return np.deg2rad(theta / 240.0) % (2 * np.pi)
 
 
@@ -89,14 +104,14 @@ def sun_ecliptic_longitude(utc_time):
     """Ecliptic longitude of the sun at *utc_time*."""
     jdate = jdays2000(utc_time) / 36525.0
     # mean anomaly, rad
-    m_a = np.deg2rad(357.52910 +
-                     35999.05030 * jdate -
-                     0.0001559 * jdate * jdate -
-                     0.00000048 * jdate * jdate * jdate)
+    m_a = np.deg2rad(357.52910 + 35999.05030 * jdate - 0.0001559 * jdate * jdate - 0.00000048 * jdate * jdate * jdate)
     # mean longitude, deg
     l_0 = 280.46645 + 36000.76983 * jdate + 0.0003032 * jdate * jdate
-    d_l = ((1.914600 - 0.004817 * jdate - 0.000014 * jdate * jdate) * np.sin(m_a) +
-           (0.019993 - 0.000101 * jdate) * np.sin(2 * m_a) + 0.000290 * np.sin(3 * m_a))
+    d_l = (
+        (1.914600 - 0.004817 * jdate - 0.000014 * jdate * jdate) * np.sin(m_a)
+        + (0.019993 - 0.000101 * jdate) * np.sin(2 * m_a)
+        + 0.000290 * np.sin(3 * m_a)
+    )
     # true longitude, deg
     l__ = l_0 + d_l
     return np.deg2rad(l__)
@@ -105,9 +120,7 @@ def sun_ecliptic_longitude(utc_time):
 def sun_ra_dec(utc_time):
     """Right ascension and declination of the sun at *utc_time*."""
     jdate = jdays2000(utc_time) / 36525.0
-    eps = np.deg2rad(23.0 + 26.0 / 60.0 + 21.448 / 3600.0 -
-                     (46.8150 * jdate + 0.00059 * jdate * jdate -
-                      0.001813 * jdate * jdate * jdate) / 3600)
+    eps = np.deg2rad(OBLIQUITY_BASE_DEG - (46.8150 * jdate + 0.00059 * jdate**2 - 0.001813 * jdate**3) / 3600)
     eclon = sun_ecliptic_longitude(utc_time)
     x__ = np.cos(eclon)
     y__ = np.cos(eps) * np.sin(eclon)
@@ -142,13 +155,16 @@ def get_alt_az(utc_time, lon, lat):
 
     ra_, dec = sun_ra_dec(utc_time)
     h__ = _local_hour_angle(utc_time, lon, ra_)
-    alt_az = (np.arcsin(np.sin(lat) * np.sin(dec) +
-                        np.cos(lat) * np.cos(dec) * np.cos(h__)),
-              np.arctan2(-np.sin(h__), (np.cos(lat) * np.tan(dec) -
-                                        np.sin(lat) * np.cos(h__))))
+
+    altitude = np.arcsin(np.sin(lat) * np.sin(dec) + np.cos(lat) * np.cos(dec) * np.cos(h__))
+    azimuth = np.arctan2(-np.sin(h__), np.cos(lat) * np.tan(dec) - np.sin(lat) * np.cos(h__))
+    azimuth = azimuth % (2 * np.pi)  # Normalize to [0, 2π)
+
     if not isinstance(lon, float):
-        alt_az = (alt_az[0].astype(lon.dtype), alt_az[1].astype(lon.dtype))
-    return alt_az
+        altitude = altitude.astype(lon.dtype)
+        azimuth = azimuth.astype(lon.dtype)
+
+    return altitude, azimuth
 
 
 def cos_zen(utc_time, lon, lat):
@@ -164,7 +180,7 @@ def cos_zen(utc_time, lon, lat):
 
     r_a, dec = sun_ra_dec(utc_time)
     h__ = _local_hour_angle(utc_time, lon, r_a)
-    csza = (np.sin(lat) * np.sin(dec) + np.cos(lat) * np.cos(dec) * np.cos(h__))
+    csza = np.sin(lat) * np.sin(dec) + np.cos(lat) * np.cos(dec) * np.cos(h__)
     if not isinstance(lon, float):
         csza = csza.astype(lon.dtype)
     return csza
@@ -202,7 +218,8 @@ def sun_earth_distance_correction(utc_time):
     #       "=" a * (1 - e * e) / AU * (1 - e * np.cos(theta))
     #       "=" 1 - 0.0167 * np.cos(theta)
 
-    corr = 1 - 0.0167 * np.cos(2 * np.pi * (jdays2000(utc_time) - 3) / 365.25636)
+    theta = 2 * np.pi * (jdays2000(utc_time) - SUN_EARTH_PERIHELION_DAY) / SUN_EARTH_YEAR_LENGTH
+    corr = 1 - SUN_EARTH_ECCENTRICITY * np.cos(theta)
     return corr
 
 
@@ -215,16 +232,16 @@ def observer_position(utc_time, lon, lat, alt):
     lat = np.deg2rad(lat)
 
     theta = (gmst(utc_time) + lon) % (2 * np.pi)
-    c = 1 / np.sqrt(1 + F * (F - 2) * np.sin(lat)**2)
-    sq = c * (1 - F)**2
+    c = 1 / np.sqrt(1 + EARTH_FLATTENING * (EARTH_FLATTENING - 2) * np.sin(lat) ** 2)
+    sq = c * (1 - EARTH_FLATTENING) ** 2
 
-    achcp = (A * c + alt) * np.cos(lat)
+    achcp = (EARTH_RADIUS_EQUATORIAL * c + alt) * np.cos(lat)
     x = achcp * np.cos(theta)  # kilometers
     y = achcp * np.sin(theta)
-    z = (A * sq + alt) * np.sin(lat)
+    z = (EARTH_RADIUS_EQUATORIAL * sq + alt) * np.sin(lat)
 
-    vx = -MFACTOR * y  # kilometers/second
-    vy = MFACTOR * x
+    vx = -EARTH_ROTATION_RATE * y  # kilometers/second
+    vy = EARTH_ROTATION_RATE * x
     vz = _float_to_sibling_result(0.0, vx)
 
     if not isinstance(lon, float):
@@ -254,3 +271,12 @@ def _float_to_sibling_result(result_to_convert, template_result):
         # recreate the wrapper object
         array_convert = template_result.__class__(array_convert)
     return array_convert
+
+
+def estimate_solar_irradiance(utc_time: np.datetime64, lon: float, lat: float) -> float:
+    """Estimate solar irradiance at a location and time in W/m²."""
+    I0 = 1361.0  # Solar constant in W/m²
+    cos_zenith = cos_zen(utc_time, lon, lat)
+    distance_corr = sun_earth_distance_correction(utc_time)
+    irradiance = I0 * cos_zenith / (distance_corr**2)
+    return max(irradiance, 0.0)  # Clamp negative values to zero
