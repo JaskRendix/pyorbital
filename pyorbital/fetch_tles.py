@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-
 """Script to download and store satellite TLE data."""
 
 import logging
