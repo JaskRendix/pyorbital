@@ -1,4 +1,20 @@
-###############################################################################
+## Version 1.12.0 (2026/02/06)
+
+### Issues Closed
+
+* [Issue 208](https://github.com/pytroll/pyorbital/issues/208) - Relicense to Apache Version 2 ([PR 222](https://github.com/pytroll/pyorbital/pull/222) by [@djhoese](https://github.com/djhoese))
+
+In this release 1 issue was closed.
+
+### Pull Requests Merged
+
+#### Features added
+
+* [PR 222](https://github.com/pytroll/pyorbital/pull/222) - Relicense to Apache 2.0 ([208](https://github.com/pytroll/pyorbital/issues/208))
+
+In this release 1 pull request was closed.
+
+
 ## Version 1.11.0 (2025/11/18)
 
 ### Issues Closed
@@ -30,11 +46,8 @@ In this release 6 issues were closed.
 
 In this release 8 pull requests were closed.
 
-###############################################################################
-
 
 ## Version 1.10.2 (2025/06/09)
-
 
 ### Pull Requests Merged
 
@@ -46,7 +59,6 @@ In this release 1 pull request was closed.
 
 
 ## Version 1.10.1 (2025/05/08)
-
 
 ### Pull Requests Merged
 
