@@ -1,21 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-#
-# Copyright (c) 2011-2024 Pytroll Community
-#
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """Classes and functions for handling TLE files."""
 import contextlib
 import datetime as dt
@@ -27,10 +9,13 @@ import sqlite3
 import warnings
 from itertools import zip_longest
 from urllib.request import urlopen
+from warnings import warn
 
 import defusedxml.ElementTree as ET
 import numpy as np
 import requests
+
+from pyorbital.config import config
 
 TLE_GROUPS = ("active",
               "weather",
@@ -49,20 +34,17 @@ TLE_URLS = [f"https://celestrak.org/NORAD/elements/gp.php?GROUP={group}&FORMAT=t
 LOGGER = logging.getLogger(__name__)
 PKG_CONFIG_DIR = os.path.join(os.path.realpath(os.path.dirname(__file__)), "etc")
 
-class TleDownloadTimeoutError(Exception):
-    """TLE download timeout exception."""
-
 
 def _get_config_path():
     """Get the config path for Pyorbital."""
-    if "PPP_CONFIG_DIR" in os.environ and "PYORBITAL_CONFIG_PATH" not in os.environ:
+    if "PPP_CONFIG_DIR" in os.environ and "config_path" not in config:
         LOGGER.warning(
             "The use of PPP_CONFIG_DIR is no longer supported!" +
             " Please use PYORBITAL_CONFIG_PATH if you need a custom config path for pyorbital!")
         LOGGER.debug("Using the package default for configuration: %s", PKG_CONFIG_DIR)
         return PKG_CONFIG_DIR
     else:
-        pyorbital_config_path = os.getenv("PYORBITAL_CONFIG_PATH", PKG_CONFIG_DIR)
+        pyorbital_config_path = config.get("config_path", PKG_CONFIG_DIR)
 
     LOGGER.debug("Path to the Pyorbital configuration (where e.g. platforms.txt is found): %s",
                  str(pyorbital_config_path))
@@ -162,7 +144,7 @@ class ChecksumError(Exception):
     """ChecksumError."""
 
 
-class Tle(object):
+class Tle:
     """Class holding TLE objects."""
 
     def __init__(self, platform, tle_file=None, line1=None, line2=None):
@@ -187,7 +169,7 @@ class Tle(object):
         self.element_number = None
         self.inclination = None
         self.right_ascension = None
-        self.excentricity = None
+        self.eccentricity = None
         self.arg_perigee = None
         self.mean_anomaly = None
         self.mean_motion = None
@@ -196,6 +178,12 @@ class Tle(object):
         self._read_tle()
         self._checksum()
         self._parse_tle()
+
+    @property
+    def excentricity(self):
+        """Get 'eccentricity' using legacy 'excentricity' name."""
+        warnings.warn("The 'eccentricity' property is deprecated in favor of 'eccentricity'", stacklevel=2)
+        return self.eccentricity
 
     @property
     def line1(self):
@@ -272,11 +260,39 @@ class Tle(object):
 
         self.inclination = float(self._line2[8:16])
         self.right_ascension = float(self._line2[17:25])
-        self.excentricity = int(self._line2[26:33]) * 10 ** -7
+        self.eccentricity = int(self._line2[26:33]) * 10 ** -7
         self.arg_perigee = float(self._line2[34:42])
         self.mean_anomaly = float(self._line2[43:51])
         self.mean_motion = float(self._line2[52:63])
         self.orbit = int(self._line2[63:68])
+
+    def to_dict(self):
+        """Return the raw, parsed TLE elements as a dictionary."""
+        return {
+            "platform": self.platform,
+            "satnumber": self.satnumber,
+            "classification": self.classification,
+            "id_launch_year": self.id_launch_year,
+            "id_launch_number": self.id_launch_number,
+            "id_launch_piece": self.id_launch_piece,
+            "epoch_year": self.epoch_year,
+            "epoch_day": self.epoch_day,
+            "epoch": self.epoch,
+            "mean_motion_derivative": self.mean_motion_derivative,
+            "mean_motion_sec_derivative": self.mean_motion_sec_derivative,
+            "bstar": self.bstar,
+            "ephemeris_type": self.ephemeris_type,
+            "element_number": self.element_number,
+            "inclination": self.inclination,
+            "right_ascension": self.right_ascension,
+            "eccentricity": self.eccentricity,
+            "arg_perigee": self.arg_perigee,
+            "mean_anomaly": self.mean_anomaly,
+            "mean_motion": self.mean_motion,
+            "orbit": self.orbit,
+            "line1": self._line1,
+            "line2": self._line2,
+        }
 
     def __str__(self):
         """Format the class data for printing."""
@@ -332,6 +348,10 @@ def _get_local_uris_and_open_method(local_tle_path):
         LOGGER.debug("Reading TLE from %s", uris[0])
         open_func = _open
     else:
+        if config.get("fetch_from_celestrak", None) is not True:
+            warn("In the future, implicit downloads of TLEs from Celestrak will be disabled by default. "
+                 "You can enable it (and remove this warning) by setting PYORBITAL_FETCH_FROM_CELESTRAK to True.",
+                 DeprecationWarning)
         LOGGER.warning("TLES environment variable points to no TLE files")
         throttle_warning = "TLEs will be downloaded from Celestrak, which can throttle the connection."
         LOGGER.warning(throttle_warning)
@@ -444,8 +464,9 @@ class Downloader(object):
                     try:
                         req = requests.get(uri, timeout=15)  # 15 seconds
                     except requests.exceptions.Timeout:
-                        raise TleDownloadTimeoutError(f"Failed to make request to {str(uri)} within 15 seconds!")
-                    if req.status_code == 200:
+                        logging.error(f"Failed to make request to {str(uri)} within 15 seconds!")
+                        req = None
+                    if req and req.status_code == 200:
                         tles[source] += _parse_tles_for_downloader((req.text,), io.StringIO)
                     else:
                         failures.append(uri)
@@ -453,8 +474,7 @@ class Downloader(object):
                     logging.error(
                         "Could not fetch TLEs from %s, %d failure(s): [%s]",
                         source, len(failures), ", ".join(failures))
-                logging.info("Downloaded %d TLEs from %s",
-                             len(tles[source]), source)
+                logging.info("Downloaded %d TLEs from %s", len(tles[source]), source)
         return tles
 
     def fetch_spacetrack(self):
@@ -642,6 +662,8 @@ class SQLiteTLE(object):
 
         with open(fname, "w") as fid:
             fid.write("\n".join(data))
+            # Add a line-change after the last entry
+            fid.write("\n")
 
         logging.info("Wrote %d TLEs to %s", len(data), fname)
 
